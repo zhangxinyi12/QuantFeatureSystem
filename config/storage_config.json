@@ -1,0 +1,68 @@
+{
+  "default": {
+    "format": "parquet",
+    "compression": "snappy",
+    "encoding": "utf-8",
+    "partition_by": ["date", "market_code"],
+    "partition_size": 1000000,
+    "chunk_size": 10000,
+    "max_file_size": "1GB",
+    "include_metadata": true,
+    "metadata_format": "json"
+  },
+  "high_performance": {
+    "format": "parquet",
+    "compression": "lz4",
+    "encoding": "utf-8",
+    "partition_by": ["date", "market_code"],
+    "partition_size": 500000,
+    "chunk_size": 50000,
+    "max_file_size": "500MB",
+    "include_metadata": true,
+    "metadata_format": "json"
+  },
+  "high_compression": {
+    "format": "parquet",
+    "compression": "gzip",
+    "encoding": "utf-8",
+    "partition_by": ["date", "market_code"],
+    "partition_size": 2000000,
+    "chunk_size": 20000,
+    "max_file_size": "2GB",
+    "include_metadata": true,
+    "metadata_format": "json"
+  },
+  "feature_data": {
+    "format": "parquet",
+    "compression": "snappy",
+    "encoding": "utf-8",
+    "partition_by": ["date", "feature_type"],
+    "partition_size": 500000,
+    "chunk_size": 10000,
+    "max_file_size": "1GB",
+    "include_metadata": true,
+    "metadata_format": "json"
+  },
+  "raw_data": {
+    "format": "parquet",
+    "compression": "snappy",
+    "encoding": "utf-8",
+    "partition_by": ["date", "market_code", "data_type"],
+    "partition_size": 1000000,
+    "chunk_size": 10000,
+    "max_file_size": "1GB",
+    "include_metadata": true,
+    "metadata_format": "json"
+  },
+  "csv_export": {
+    "format": "csv",
+    "compression": "gzip",
+    "encoding": "utf-8",
+    "partition_by": null,
+    "partition_size": 1000000,
+    "chunk_size": 10000,
+    "max_file_size": "1GB",
+    "include_metadata": false,
+    "metadata_format": "json"
+  }
+} 
