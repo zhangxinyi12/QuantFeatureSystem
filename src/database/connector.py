@@ -1,6 +1,6 @@
 """
 数据库连接器
-基于聚源数据库的连接管理
+基于聚源数据库的连接管理，支持SSH隧道连接
 """
 
 import pymysql
@@ -11,7 +11,8 @@ import logging
 from typing import Optional, Dict, Any
 import time
 
-from config.settings import DATABASE_CONFIG, SSH_TUNNEL_CONFIG
+from config.settings import DATABASE_CONFIG, SSH_TUNNEL_CONFIG, SSH_DATABASE_CONFIG
+from src.utils.ssh_tunnel import SSHTunnelManager, test_ssh_connection, test_tunnel_connection
 
 logger = logging.getLogger('database')
 
@@ -25,10 +26,17 @@ class JuyuanDB:
         Args:
             use_ssh_tunnel: 是否使用SSH隧道连接
         """
-        self.config = DATABASE_CONFIG.copy()
         self.use_ssh_tunnel = use_ssh_tunnel
         self.conn = None
         self.engine = None
+        self.ssh_tunnel_manager = None
+        
+        if use_ssh_tunnel:
+            self.config = SSH_DATABASE_CONFIG.copy()
+            self.ssh_tunnel_manager = SSHTunnelManager(SSH_TUNNEL_CONFIG)
+        else:
+            self.config = DATABASE_CONFIG.copy()
+        
         self._setup_connection()
     
     def _setup_connection(self):
@@ -46,7 +54,9 @@ class JuyuanDB:
                 database=self.config['database'],
                 charset=self.config['charset'],
                 cursorclass=pymysql.cursors.DictCursor,
-                autocommit=True
+                autocommit=True,
+                connect_timeout=30,
+                read_timeout=60
             )
             
             # 创建SQLAlchemy引擎
@@ -61,52 +71,43 @@ class JuyuanDB:
                 pool_size=5,
                 max_overflow=10,
                 pool_timeout=30,
-                pool_recycle=3600
+                pool_recycle=3600,
+                echo=False
             )
             
-            logger.info("数据库连接建立成功")
+            logger.info(f"数据库连接建立成功 {'(通过SSH隧道)' if self.use_ssh_tunnel else ''}")
             
         except Exception as e:
             logger.error(f"数据库连接失败: {str(e)}")
+            if self.use_ssh_tunnel and self.ssh_tunnel_manager:
+                self.ssh_tunnel_manager.close_tunnel()
             raise
     
     def _setup_ssh_tunnel(self):
-        """设置SSH隧道（如果需要）"""
-        if not SSH_TUNNEL_CONFIG['enabled']:
-            return
-            
+        """设置SSH隧道"""
+        if not self.ssh_tunnel_manager:
+            raise RuntimeError("SSH隧道管理器未初始化")
+        
         try:
-            import paramiko
-            import socket
+            # 测试SSH连接
+            if not test_ssh_connection(SSH_TUNNEL_CONFIG):
+                raise Exception("SSH连接测试失败")
             
-            # 创建SSH隧道
-            ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            # 创建隧道
+            if not self.ssh_tunnel_manager.create_tunnel():
+                raise Exception("SSH隧道创建失败")
             
-            ssh.connect(
-                SSH_TUNNEL_CONFIG['ssh_host'],
-                port=SSH_TUNNEL_CONFIG['ssh_port'],
-                username=SSH_TUNNEL_CONFIG['ssh_user']
-            )
+            # 等待隧道建立
+            time.sleep(2)
             
-            # 创建本地端口转发
-            ssh.get_transport().request_port_forward(
-                '',  # 本地地址
-                SSH_TUNNEL_CONFIG['local_port'],
-                SSH_TUNNEL_CONFIG['remote_host'],
-                SSH_TUNNEL_CONFIG['remote_port']
-            )
-            
-            # 更新连接配置
-            self.config['host'] = '127.0.0.1'
-            self.config['port'] = SSH_TUNNEL_CONFIG['local_port']
+            # 测试隧道连接
+            if not self.ssh_tunnel_manager.is_tunnel_active():
+                raise Exception("SSH隧道连接测试失败")
             
             logger.info("SSH隧道建立成功")
             
-        except ImportError:
-            logger.warning("paramiko未安装，无法使用SSH隧道")
         except Exception as e:
-            logger.error(f"SSH隧道建立失败: {str(e)}")
+            logger.error(f"SSH隧道设置失败: {str(e)}")
             raise
     
     def execute(self, sql: str) -> bool:
@@ -201,14 +202,30 @@ class JuyuanDB:
             logger.error(f"获取表信息失败: {str(e)}")
             return {}
     
+    def get_table_count(self, table_name: str) -> int:
+        """获取表记录数"""
+        try:
+            sql = f"SELECT COUNT(*) as count FROM {table_name}"
+            result = self.query(sql)
+            return result[0]['count'] if result else 0
+        except Exception as e:
+            logger.error(f"获取表记录数失败: {str(e)}")
+            return 0
+    
     def close(self):
         """关闭数据库连接"""
         try:
             if self.conn:
                 self.conn.close()
+                logger.info("数据库连接已关闭")
+            
             if self.engine:
                 self.engine.dispose()
-            logger.info("数据库连接已关闭")
+                logger.info("数据库引擎已关闭")
+            
+            if self.use_ssh_tunnel and self.ssh_tunnel_manager:
+                self.ssh_tunnel_manager.close_tunnel()
+                
         except Exception as e:
             logger.error(f"关闭连接时出错: {str(e)}")
     
@@ -218,4 +235,72 @@ class JuyuanDB:
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         """上下文管理器出口"""
-        self.close() 
+        self.close()
+
+def test_database_connection(use_ssh_tunnel: bool = False) -> bool:
+    """
+    测试数据库连接
+    
+    Args:
+        use_ssh_tunnel: 是否使用SSH隧道
+        
+    Returns:
+        bool: 连接是否成功
+    """
+    try:
+        with JuyuanDB(use_ssh_tunnel=use_ssh_tunnel) as db:
+            if db.test_connection():
+                logger.info("数据库连接测试成功")
+                return True
+            else:
+                logger.error("数据库连接测试失败")
+                return False
+    except Exception as e:
+        logger.error(f"数据库连接测试异常: {str(e)}")
+        return False
+
+def get_database_info(use_ssh_tunnel: bool = False) -> Dict[str, Any]:
+    """
+    获取数据库信息
+    
+    Args:
+        use_ssh_tunnel: 是否使用SSH隧道
+        
+    Returns:
+        Dict: 数据库信息
+    """
+    try:
+        with JuyuanDB(use_ssh_tunnel=use_ssh_tunnel) as db:
+            # 获取数据库版本
+            version_sql = "SELECT VERSION() as version"
+            version_result = db.query(version_sql)
+            
+            # 获取当前数据库
+            database_sql = "SELECT DATABASE() as database_name"
+            database_result = db.query(database_sql)
+            
+            # 获取表列表
+            tables_sql = "SHOW TABLES"
+            tables_result = db.query(tables_sql)
+            
+            return {
+                'version': version_result[0]['version'] if version_result else 'Unknown',
+                'database': database_result[0]['database_name'] if database_result else 'Unknown',
+                'tables_count': len(tables_result),
+                'connection_type': 'SSH Tunnel' if use_ssh_tunnel else 'Direct'
+            }
+    except Exception as e:
+        logger.error(f"获取数据库信息失败: {str(e)}")
+        return {}
+
+if __name__ == "__main__":
+    # 测试代码
+    print("=== 测试直接连接 ===")
+    if test_database_connection(use_ssh_tunnel=False):
+        info = get_database_info(use_ssh_tunnel=False)
+        print(f"数据库信息: {info}")
+    
+    print("\n=== 测试SSH隧道连接 ===")
+    if test_database_connection(use_ssh_tunnel=True):
+        info = get_database_info(use_ssh_tunnel=True)
+        print(f"数据库信息: {info}") 

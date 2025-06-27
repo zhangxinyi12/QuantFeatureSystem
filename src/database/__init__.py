@@ -8,11 +8,11 @@
 from .connector import JuyuanDB
 from .queries import StockQueries
 from .ingestion_base import DataIngestionBase
-from .missing import MissingDataHandler
+from .missing import MissingValueHandler
 
 __all__ = [
     'JuyuanDB',
     'StockQueries',
     'DataIngestionBase',
-    'MissingDataHandler'
+    'MissingValueHandler'
 ]

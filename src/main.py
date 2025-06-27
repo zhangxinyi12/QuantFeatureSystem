@@ -51,10 +51,6 @@ except ImportError as e:
     print(f"警告: 某些模块导入失败: {e}")
     print("将使用基础功能模式")
 
-from .preprocess import data_validator, date_utils, drift_detection, market_features
-from .monitoring import memory_utils, monitoring
-from .reporting import report_generator
-
 class QuantFeatureSystem:
     """量化特征系统主类"""
     
@@ -115,7 +111,7 @@ class QuantFeatureSystem:
         except Exception as e:
             self.logger.warning(f"部分组件初始化失败: {e}")
             
-    def process_stock_data(self, args):
+    def process_stock_data(self, args, use_ssh_tunnel=False):
         """处理股票数据（从数据库查询到特征生成）"""
         self.logger.info("开始执行股票数据处理")
         self.logger.info(f"参数: {vars(args)}")
@@ -123,7 +119,7 @@ class QuantFeatureSystem:
         try:
             # 连接数据库
             self.logger.info("连接数据库...")
-            with JuyuanDB() as db:
+            with JuyuanDB(use_ssh_tunnel=use_ssh_tunnel) as db:
                 if not db.test_connection():
                     self.logger.error("数据库连接测试失败")
                     return None
@@ -581,6 +577,10 @@ def parse_arguments():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(description='量化特征系统')
     
+    # 全局选项
+    parser.add_argument('--use-ssh-tunnel', action='store_true', help='使用SSH隧道连接数据库')
+    parser.add_argument('--test-connection', action='store_true', help='测试数据库连接')
+    
     # 子命令
     subparsers = parser.add_subparsers(dest='command', help='可用命令')
     
@@ -634,6 +634,29 @@ def main():
     """主函数"""
     args = parse_arguments()
     
+    # 测试数据库连接
+    if args.test_connection:
+        print("🔍 测试数据库连接...")
+        from database.connector import test_database_connection, get_database_info
+        
+        # 测试直接连接
+        print("\n1. 测试直接连接...")
+        if test_database_connection(use_ssh_tunnel=False):
+            info = get_database_info(use_ssh_tunnel=False)
+            print(f"✅ 直接连接成功: {info}")
+        else:
+            print("❌ 直接连接失败")
+        
+        # 测试SSH隧道连接
+        print("\n2. 测试SSH隧道连接...")
+        if test_database_connection(use_ssh_tunnel=True):
+            info = get_database_info(use_ssh_tunnel=True)
+            print(f"✅ SSH隧道连接成功: {info}")
+        else:
+            print("❌ SSH隧道连接失败")
+        
+        return 0
+    
     if not args.command:
         print("请指定要执行的命令。使用 --help 查看帮助信息。")
         return 1
@@ -643,7 +666,8 @@ def main():
     
     try:
         if args.command == 'process':
-            system.process_stock_data(args)
+            # 传递SSH隧道参数
+            system.process_stock_data(args, use_ssh_tunnel=args.use_ssh_tunnel)
             
         elif args.command == 'monitor':
             system.start_monitoring(args.duration)

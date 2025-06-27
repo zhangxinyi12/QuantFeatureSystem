@@ -9,6 +9,15 @@ from pathlib import Path
 # 项目根目录
 PROJECT_ROOT = Path(__file__).parent.parent
 
+# 服务器配置
+SERVER_CONFIG = {
+    'host': '39.96.116.223',
+    'username': 'zlt',
+    'password': '123QWEasd03',
+    'port': 22,  # SSH端口
+    'timeout': 30
+}
+
 # 数据库配置
 DATABASE_CONFIG = {
     'host': '172.18.122.83',
@@ -19,15 +28,27 @@ DATABASE_CONFIG = {
     'charset': 'utf8mb4'
 }
 
-# SSH隧道配置（如果需要）
+# SSH隧道配置（用于连接远程数据库）
 SSH_TUNNEL_CONFIG = {
-    'enabled': False,
-    'ssh_host': 'your_ssh_host',
+    'enabled': True,  # 启用SSH隧道
+    'ssh_host': '39.96.116.223',
     'ssh_port': 22,
-    'ssh_user': 'your_ssh_user',
-    'local_port': 3307,
-    'remote_host': '172.18.122.83',
-    'remote_port': 3306
+    'ssh_user': 'zlt',
+    'ssh_password': '123QWEasd03',
+    'local_port': 3307,  # 本地转发端口
+    'remote_host': '172.18.122.83',  # 远程数据库主机
+    'remote_port': 3306,  # 远程数据库端口
+    'timeout': 30
+}
+
+# 通过SSH隧道连接的数据库配置
+SSH_DATABASE_CONFIG = {
+    'host': 'localhost',  # 通过SSH隧道连接时使用localhost
+    'port': 3307,  # 本地转发端口
+    'user': 'jydb_ro',
+    'password': '1qaz@WSX',
+    'database': 'gildata',
+    'charset': 'utf8mb4'
 }
 
 # 数据处理配置

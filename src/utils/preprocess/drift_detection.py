@@ -551,7 +551,10 @@ if __name__ == "__main__":
     
     # 获取摘要
     summary = detector.get_drift_summary()
-    print("漂移检测摘要:", summary) class FeatureDriftDetector:
+    print("漂移检测摘要:", summary)
+
+
+class FeatureDriftDetector:
     def __init__(self, reference_data):
         self.reference = reference_data
     
