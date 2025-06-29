@@ -18,9 +18,9 @@ SERVER_CONFIG = {
     'timeout': 30
 }
 
-# 数据库配置
+# 数据库配置（直接连接）
 DATABASE_CONFIG = {
-    'host': '172.18.122.83',
+    'host': '172.18.122.83',  # 直接使用数据库服务器IP
     'port': 3306,
     'user': 'jydb_ro',
     'password': '1qaz@WSX',
@@ -28,23 +28,23 @@ DATABASE_CONFIG = {
     'charset': 'utf8mb4'
 }
 
-# SSH隧道配置（用于连接远程数据库）
+# SSH隧道配置（禁用）
 SSH_TUNNEL_CONFIG = {
-    'enabled': True,  # 启用SSH隧道
+    'enabled': False,  # 禁用SSH隧道
     'ssh_host': '39.96.116.223',
     'ssh_port': 22,
     'ssh_user': 'zlt',
     'ssh_password': '123QWEasd03',
-    'local_port': 3307,  # 本地转发端口
-    'remote_host': '172.18.122.83',  # 远程数据库主机
-    'remote_port': 3306,  # 远程数据库端口
+    'local_port': 3307,
+    'remote_host': '172.18.122.83',
+    'remote_port': 3306,
     'timeout': 30
 }
 
-# 通过SSH隧道连接的数据库配置
+# 通过SSH隧道连接的数据库配置（不再使用）
 SSH_DATABASE_CONFIG = {
-    'host': 'localhost',  # 通过SSH隧道连接时使用localhost
-    'port': 3307,  # 本地转发端口
+    'host': 'localhost',
+    'port': 3307,
     'user': 'jydb_ro',
     'password': '1qaz@WSX',
     'database': 'gildata',

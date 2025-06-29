@@ -24,7 +24,7 @@ class JuyuanDB:
         初始化数据库连接
         
         Args:
-            use_ssh_tunnel: 是否使用SSH隧道连接
+            use_ssh_tunnel: 是否使用SSH隧道连接（默认False）
         """
         self.use_ssh_tunnel = use_ssh_tunnel
         self.conn = None
@@ -242,21 +242,18 @@ def test_database_connection(use_ssh_tunnel: bool = False) -> bool:
     测试数据库连接
     
     Args:
-        use_ssh_tunnel: 是否使用SSH隧道
+        use_ssh_tunnel: 是否使用SSH隧道连接（默认False）
         
     Returns:
         bool: 连接是否成功
     """
     try:
-        with JuyuanDB(use_ssh_tunnel=use_ssh_tunnel) as db:
-            if db.test_connection():
-                logger.info("数据库连接测试成功")
-                return True
-            else:
-                logger.error("数据库连接测试失败")
-                return False
+        db = JuyuanDB(use_ssh_tunnel=use_ssh_tunnel)
+        result = db.test_connection()
+        db.close()
+        return result
     except Exception as e:
-        logger.error(f"数据库连接测试异常: {str(e)}")
+        logger.error(f"数据库连接测试异常: {e}")
         return False
 
 def get_database_info(use_ssh_tunnel: bool = False) -> Dict[str, Any]:
