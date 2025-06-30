@@ -54,8 +54,16 @@ except ImportError as e:
 class QuantFeatureSystem:
     """量化特征系统主类"""
     
-    def __init__(self):
-        """初始化系统"""
+    def __init__(self, start_date=None, end_date=None):
+        """初始化系统
+        
+        Args:
+            start_date: 回测开始日期 (YYYY-MM-DD)
+            end_date: 回测结束日期 (YYYY-MM-DD)
+        """
+        self.start_date = start_date or DATA_CONFIG.get('default_start_date', '2024-01-01')
+        self.end_date = end_date or DATA_CONFIG.get('default_end_date', '2024-12-31')
+        
         self.setup_logging()
         self.logger = logging.getLogger(__name__)
         
@@ -64,6 +72,8 @@ class QuantFeatureSystem:
         
         # 初始化组件
         self.init_components()
+        
+        self.logger.info(f"回测时间范围: {self.start_date} 到 {self.end_date}")
         
     def setup_logging(self):
         """设置日志配置"""
@@ -114,6 +124,7 @@ class QuantFeatureSystem:
     def process_stock_data(self, args, use_ssh_tunnel=False):
         """处理股票数据（从数据库查询到特征生成）"""
         self.logger.info("开始执行股票数据处理")
+        self.logger.info(f"回测时间范围: {self.start_date} 到 {self.end_date}")
         self.logger.info(f"参数: {vars(args)}")
         
         try:
@@ -126,18 +137,23 @@ class QuantFeatureSystem:
                 
                 self.logger.info("数据库连接成功")
                 
-                # 测试模式：只查询最近一周的数据
+                # 使用系统设置的回测时间范围，除非测试模式
                 if args.test_mode:
                     end_date = datetime.now().date()
                     start_date = end_date - timedelta(days=7)
-                    args.start_date = start_date.strftime('%Y-%m-%d')
-                    args.end_date = end_date.strftime('%Y-%m-%d')
-                    self.logger.info(f"测试模式：查询 {args.start_date} 到 {args.end_date} 的数据")
+                    query_start_date = start_date.strftime('%Y-%m-%d')
+                    query_end_date = end_date.strftime('%Y-%m-%d')
+                    self.logger.info(f"测试模式：查询 {query_start_date} 到 {query_end_date} 的数据")
+                else:
+                    # 使用系统设置的回测时间范围
+                    query_start_date = self.start_date
+                    query_end_date = self.end_date
+                    self.logger.info(f"回测模式：查询 {query_start_date} 到 {query_end_date} 的数据")
                 
                 # 构建查询SQL
                 sql = StockQueries.get_stock_quote_history(
-                    start_date=args.start_date,
-                    end_date=args.end_date,
+                    start_date=query_start_date,
+                    end_date=query_end_date,
                     market_codes=args.market_codes,
                     include_suspended=False
                 )
@@ -476,9 +492,8 @@ class QuantFeatureSystem:
 ================
 
 处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+回测时间范围: {self.start_date} 到 {self.end_date}
 查询参数:
-- 开始日期: {args.start_date}
-- 结束日期: {args.end_date}
 - 市场代码: {args.market_codes}
 - 复权类型: {args.adj_type}
 - 技术指标: {'是' if args.include_technical else '否'}
@@ -580,14 +595,16 @@ def parse_arguments():
     # 全局选项
     parser.add_argument('--use-ssh-tunnel', action='store_true', help='使用SSH隧道连接数据库')
     parser.add_argument('--test-connection', action='store_true', help='测试数据库连接')
+    parser.add_argument('--start-date', type=str, default=DATA_CONFIG.get('default_start_date', '2024-01-01'), 
+                       help='回测开始日期 (YYYY-MM-DD)')
+    parser.add_argument('--end-date', type=str, default=DATA_CONFIG.get('default_end_date', '2024-12-31'), 
+                       help='回测结束日期 (YYYY-MM-DD)')
     
     # 子命令
     subparsers = parser.add_subparsers(dest='command', help='可用命令')
     
     # 数据处理命令
     process_parser = subparsers.add_parser('process', help='处理股票数据')
-    process_parser.add_argument('--start-date', type=str, default=DATA_CONFIG['default_start_date'], help='开始日期 (YYYY-MM-DD)')
-    process_parser.add_argument('--end-date', type=str, default=DATA_CONFIG['default_end_date'], help='结束日期 (YYYY-MM-DD)')
     process_parser.add_argument('--market-codes', type=int, nargs='+', default=DATA_CONFIG['market_codes'], help='市场代码列表')
     process_parser.add_argument('--output-format', type=str, default=DATA_CONFIG['output_format'], choices=['feather', 'parquet', 'csv'], help='输出格式')
     process_parser.add_argument('--chunk-size', type=int, default=DATA_CONFIG['chunk_size'], help='分块大小')
@@ -661,8 +678,11 @@ def main():
         print("请指定要执行的命令。使用 --help 查看帮助信息。")
         return 1
     
-    # 创建系统实例
-    system = QuantFeatureSystem()
+    # 创建系统实例，使用命令行参数的回测时间范围
+    system = QuantFeatureSystem(
+        start_date=args.start_date,
+        end_date=args.end_date
+    )
     
     try:
         if args.command == 'process':

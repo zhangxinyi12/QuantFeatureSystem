@@ -1,4 +1,4 @@
-import conn
+xiimport conn
 
 def query_stock_quote_hist(start='2015-01-01', end='2024-10-16'):
     conn_jy = conn.jydb()

@@ -112,7 +112,7 @@ class StockQuoteQualityChecker:
         
         return ranges
     
-    def check_new_stock_issues(self, row, issues, year, month):
+    def check_new_stock_issues(self, row, issues, year, month, db=None):
         """检查新股上市特殊情况
         
         Args:
@@ -120,6 +120,7 @@ class StockQuoteQualityChecker:
             issues: 问题列表
             year: 年份
             month: 月份
+            db: 数据库连接（可选，用于计算交易日）
         """
         try:
             # 检查是否有上市日期
@@ -132,7 +133,17 @@ class StockQuoteQualityChecker:
             trading_day = pd.to_datetime(row['TradingDay'])
             
             # 计算上市天数
-            days_since_listed = (trading_day - listed_date).days
+            if db is not None:
+                # 使用交易日计算
+                trading_days_since_listed = self.get_trading_days_count(
+                    listed_date.strftime('%Y-%m-%d'), 
+                    trading_day.strftime('%Y-%m-%d'), 
+                    db
+                )
+                days_since_listed = trading_days_since_listed
+            else:
+                # 使用自然日计算（备用方案）
+                days_since_listed = (trading_day - listed_date).days
             
             # 检查是否为新股（上市不足30天）
             is_new_stock = days_since_listed <= 30
@@ -145,14 +156,13 @@ class StockQuoteQualityChecker:
                 # 新股上市前5个交易日不设涨跌幅限制，且数据问题属于正常情况
                 if days_since_listed <= 5:
                     # 前5日的数据问题属于正常情况，不标记为问题
-                    # 前5日没有涨跌停限制是正常的
                     pass
                 else:
                     # 第6个交易日起应有涨跌停限制
                     if price_ceiling is None or price_ceiling == 0:
-                        issues.append(f"新股涨跌停:上市{days_since_listed}天应设涨跌停限制(PriceCeiling为空)")
+                        issues.append(f"新股涨跌停:上市{days_since_listed}个交易日应设涨跌停限制(PriceCeiling为空)")
                     if price_floor is None or price_floor == 0:
-                        issues.append(f"新股涨跌停:上市{days_since_listed}天应设涨跌停限制(PriceFloor为空)")
+                        issues.append(f"新股涨跌停:上市{days_since_listed}个交易日应设涨跌停限制(PriceFloor为空)")
                     
                     # 检查涨跌停幅度是否符合规定
                     if price_ceiling is not None and price_ceiling > 0 and row.get('PrevClosePrice', 0) > 0:
@@ -193,7 +203,70 @@ class StockQuoteQualityChecker:
         except Exception as e:
             issues.append(f"新股检查异常: {str(e)}")
     
-    def is_new_stock_first_5_days(self, row):
+    def get_trading_days_count(self, start_date, end_date, db):
+        """计算两个日期之间的交易日数量
+        
+        注意：这里依赖数据库中的QT_TradingDayNew表，该表包含：
+        - TradingDate: 日期
+        - IfTradingDay: 是否交易日 (1=是交易日, 0=非交易日)
+        - SecuMarket: 证券市场 (83=深交所, 90=上交所)
+        - 考虑了周末、法定节假日、调休工作日
+        - 不同年份的节假日安排
+        
+        Args:
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+            db: 数据库连接
+            
+        Returns:
+            int: 交易日数量
+        """
+        try:
+            # 首先验证交易日历表是否存在数据
+            check_sql = f"""
+            SELECT COUNT(*) as total_days
+            FROM QT_TradingDayNew
+            WHERE TradingDate BETWEEN '{start_date}' AND '{end_date}'
+                AND SecuMarket IN (83, 90)  -- 中国股市
+                AND IfTradingDay = 1  -- 是交易日
+            """
+            check_result = db.read_sql(check_sql)
+            total_days = check_result.iloc[0]['total_days'] if not check_result.empty else 0
+            
+            if total_days == 0:
+                logging.warning(f"交易日历表中没有找到 {start_date} 到 {end_date} 的中国股市交易日数据")
+                # 回退到自然日计算
+                natural_days = (pd.to_datetime(end_date) - pd.to_datetime(start_date)).days
+                logging.debug(f"使用自然日计算: {start_date} 到 {end_date}, 自然日数: {natural_days}")
+                return natural_days
+            
+            # 计算交易日数量
+            sql = f"""
+            SELECT COUNT(*) as trading_days
+            FROM QT_TradingDayNew
+            WHERE TradingDate BETWEEN '{start_date}' AND '{end_date}'
+                AND SecuMarket IN (83, 90)  -- 中国股市
+                AND IfTradingDay = 1  -- 是交易日
+            """
+            result = db.read_sql(sql)
+            trading_days = result.iloc[0]['trading_days'] if not result.empty else 0
+            
+            # 添加详细的调试日志
+            natural_days = (pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1
+            logging.debug(f"交易日计算: {start_date} 到 {end_date}")
+            logging.debug(f"  自然日数: {natural_days}")
+            logging.debug(f"  交易日数: {trading_days}")
+            logging.debug(f"  差异(节假日+周末): {natural_days - trading_days}")
+            
+            return trading_days
+            
+        except Exception as e:
+            logging.warning(f"计算交易日数量失败: {str(e)}，使用自然日计算")
+            natural_days = (pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1
+            logging.debug(f"自然日计算: {start_date} 到 {end_date}, 自然日数: {natural_days}")
+            return natural_days
+    
+    def is_new_stock_first_5_days(self, row, db=None):
         """判断是否为新股前5个交易日"""
         try:
             if pd.isna(row.get('ListedDate')):
@@ -201,10 +274,22 @@ class StockQuoteQualityChecker:
             
             listed_date = pd.to_datetime(row['ListedDate'])
             trading_day = pd.to_datetime(row['TradingDay'])
-            days_since_listed = (trading_day - listed_date).days
             
-            # 新股定义为上市不足30天，且前5个交易日
-            return days_since_listed <= 30 and days_since_listed <= 5
+            # 计算交易日天数
+            if db is not None:
+                # 使用交易日计算
+                trading_days_since_listed = self.get_trading_days_count(
+                    listed_date.strftime('%Y-%m-%d'), 
+                    trading_day.strftime('%Y-%m-%d'), 
+                    db
+                )
+                days_since_listed = trading_days_since_listed
+            else:
+                # 使用自然日计算（备用方案）
+                days_since_listed = (trading_day - listed_date).days
+            
+            # 新股定义为上市不足30个交易日，且前5个交易日
+            return days_since_listed <= 5
         except:
             return False
     
@@ -270,7 +355,7 @@ class StockQuoteQualityChecker:
                 }
             
             # 检查数据质量
-            quality_issues, problem_rows = self.analyze_data_quality(df, year, month)
+            quality_issues, problem_rows = self.analyze_data_quality(df, year, month, db)
             
             # 生成统计摘要
             summary = self.generate_summary(df, quality_issues, year, month)
@@ -317,7 +402,7 @@ class StockQuoteQualityChecker:
                 except Exception as e:
                     logging.error(f"关闭数据库连接时出错: {str(e)}")
     
-    def analyze_data_quality(self, df, year, month):
+    def analyze_data_quality(self, df, year, month, db=None):
         """分析数据质量问题"""
         quality_issues = []
         problem_rows = []  # 收集有问题的原始数据行
@@ -326,7 +411,7 @@ class StockQuoteQualityChecker:
             issues = []
             
             # 判断是否为新股前5个交易日
-            is_new_stock_first_5 = self.is_new_stock_first_5_days(row)
+            is_new_stock_first_5 = self.is_new_stock_first_5_days(row, db)
             
             # 检查每个字段的数据质量
             for field in self.key_fields:
@@ -348,29 +433,32 @@ class StockQuoteQualityChecker:
                 
                 # 检查价格字段的0值（停牌时除外）
                 if field in self.price_fields and value == 0:
-                    if field in ['PriceCeiling', 'PriceFloor'] and is_new_stock_first_5:
-                        continue  # 新股前5日涨跌停限制为0是正常的
                     if row['Ifsuspend'] != 1:  # 非停牌状态
-                        issues.append(f"{field}:价格为零(非停牌)")
+                        if not is_new_stock_first_5:  # 新股前5日的数据问题属于正常情况
+                            issues.append(f"{field}:价格为零(非停牌)")
                     else:
-                        issues.append(f"{field}:价格为零(停牌)")
+                        if not is_new_stock_first_5:  # 新股前5日的数据问题属于正常情况
+                            issues.append(f"{field}:价格为零(停牌)")
                     continue
                 
                 # 检查成交量字段的0值（停牌时正常）
                 if field in self.volume_fields and value == 0:
                     if row['Ifsuspend'] != 1:  # 非停牌状态
-                        issues.append(f"{field}:成交量为零(非停牌)")
+                        if not is_new_stock_first_5:  # 新股前5日的数据问题属于正常情况
+                            issues.append(f"{field}:成交量为零(非停牌)")
                     # 停牌时成交量为0是正常的，不标记为问题
                     continue
                 
                 # 检查价格字段的负值
                 if field in self.price_fields and value < 0:
-                    issues.append(f"{field}:负价格({value})")
+                    if not is_new_stock_first_5:  # 新股前5日的数据问题属于正常情况
+                        issues.append(f"{field}:负价格({value})")
                     continue
                 
                 # 检查成交量字段的负值
                 if field in self.volume_fields and value < 0:
-                    issues.append(f"{field}:负成交量({value})")
+                    if not is_new_stock_first_5:  # 新股前5日的数据问题属于正常情况
+                        issues.append(f"{field}:负成交量({value})")
                     continue
                 
                 # 检查价格合理性（过高或过低）
@@ -389,10 +477,10 @@ class StockQuoteQualityChecker:
                         issues.append(f"{field}:价格异常低({value}, 板块{threshold['name']}阈值{threshold['min']})")
             
             # 检查新股上市特殊情况
-            self.check_new_stock_issues(row, issues, year, month)
+            self.check_new_stock_issues(row, issues, year, month, db)
             
             # 检查价格逻辑关系（新股前5日不检查）
-            if not pd.isna(row['HighPrice']) and not pd.isna(row['LowPrice']) and not pd.isna(row['ClosePrice']):
+            if not is_new_stock_first_5 and not pd.isna(row['HighPrice']) and not pd.isna(row['LowPrice']) and not pd.isna(row['ClosePrice']):
                 if row['HighPrice'] < row['LowPrice']:
                     issues.append("价格逻辑:最高价小于最低价")
                 if row['ClosePrice'] > row['HighPrice']:
@@ -721,14 +809,14 @@ class StockQuoteQualityChecker:
 线程数: {self.max_workers}
 
 检查项目:
-- NULL/NaN值检查 (新股前5日涨跌停限制除外)
-- 占位符值检查 (-1, -999, -9999, 999, 9999, 99999) (新股前5日涨跌停限制除外)
-- 价格字段0值检查 (区分停牌和非停牌，新股前5日涨跌停限制除外)
-- 成交量0值检查 (仅非停牌状态，新股前5日除外)
-- 负值检查 (新股前5日除外)
-- 价格合理性检查 (根据上市板块动态阈值，新股前5日除外)
-- 价格逻辑关系检查 (新股前5日除外)
-- 新股上市特殊情况检查 (上市日期、涨跌停限制、上市状态)
+- NULL/NaN值检查 (新股前5个交易日涨跌停限制除外)
+- 占位符值检查 (-1, -999, -9999, 999, 9999, 99999) (新股前5个交易日涨跌停限制除外)
+- 价格字段0值检查 (区分停牌和非停牌，新股前5个交易日涨跌停限制除外)
+- 成交量0值检查 (仅非停牌状态，新股前5个交易日除外)
+- 负值检查 (新股前5个交易日除外)
+- 价格合理性检查 (根据上市板块动态阈值，新股前5个交易日除外)
+- 价格逻辑关系检查 (新股前5个交易日除外)
+- 新股上市特殊情况检查 (上市日期、涨跌停限制、上市状态，使用交易日计算)
 
 动态价格阈值配置:
 - 板块1(主板): 价格范围 0.1 - 5000
